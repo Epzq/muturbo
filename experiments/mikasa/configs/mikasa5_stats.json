@@ -1,0 +1,174 @@
+{
+  "metadata": {
+    "dataset_dirs": [
+      "/data/nrf3/usrdata/eric/dataset/mikasa-robo-vla-rlds/shell_game_push_vla_v0/1.0.0",
+      "/data/nrf3/usrdata/eric/dataset/mikasa-robo-vla-rlds/intercept_medium_vla_v0/1.0.0",
+      "/data/nrf3/usrdata/eric/dataset/mikasa-robo-vla-rlds/remember_color_5_vla_v0/1.0.0",
+      "/data/nrf3/usrdata/eric/dataset/mikasa-robo-vla-rlds/take_it_back_vla_v0/1.0.0",
+      "/data/nrf3/usrdata/eric/dataset/mikasa-robo-vla-rlds/remember_shape_and_color_3x3_vla_v0/1.0.0"
+    ],
+    "num_actions": 28791,
+    "num_episodes": 1250,
+    "num_states": 28791,
+    "split": "train",
+    "stats_key": "mikasa5",
+    "task_summaries": [
+      {
+        "dataset_dir": "/data/nrf3/usrdata/eric/dataset/mikasa-robo-vla-rlds/shell_game_push_vla_v0/1.0.0",
+        "episode_length_max": 30,
+        "episode_length_mean": 14.956,
+        "episode_length_min": 10,
+        "num_actions": 3739,
+        "num_episodes": 250
+      },
+      {
+        "dataset_dir": "/data/nrf3/usrdata/eric/dataset/mikasa-robo-vla-rlds/intercept_medium_vla_v0/1.0.0",
+        "episode_length_max": 60,
+        "episode_length_mean": 41.776,
+        "episode_length_min": 24,
+        "num_actions": 10444,
+        "num_episodes": 250
+      },
+      {
+        "dataset_dir": "/data/nrf3/usrdata/eric/dataset/mikasa-robo-vla-rlds/remember_color_5_vla_v0/1.0.0",
+        "episode_length_max": 20,
+        "episode_length_mean": 15.28,
+        "episode_length_min": 11,
+        "num_actions": 3820,
+        "num_episodes": 250
+      },
+      {
+        "dataset_dir": "/data/nrf3/usrdata/eric/dataset/mikasa-robo-vla-rlds/take_it_back_vla_v0/1.0.0",
+        "episode_length_max": 41,
+        "episode_length_mean": 28.896,
+        "episode_length_min": 21,
+        "num_actions": 7224,
+        "num_episodes": 250
+      },
+      {
+        "dataset_dir": "/data/nrf3/usrdata/eric/dataset/mikasa-robo-vla-rlds/remember_shape_and_color_3x3_vla_v0/1.0.0",
+        "episode_length_max": 19,
+        "episode_length_mean": 14.256,
+        "episode_length_min": 10,
+        "num_actions": 3564,
+        "num_episodes": 250
+      }
+    ]
+  },
+  "mikasa5": {
+    "action": {
+      "max": [
+        1.0,
+        1.0,
+        0.9810827970504761,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean": [
+        0.06171541295440923,
+        0.0712539572373531,
+        -0.4448888606654122,
+        0.033605163168148815,
+        -0.013212303721840008,
+        0.2516506890347007,
+        0.2215767150011813
+      ],
+      "min": [
+        -0.8481379747390747,
+        -1.0,
+        -1.0,
+        -1.0,
+        -1.0,
+        -1.0,
+        -1.0
+      ],
+      "std": [
+        0.32696460142386413,
+        0.3905168672289797,
+        0.5144484028008938,
+        0.36445362749830207,
+        0.4280802246642826,
+        0.5299698104578078,
+        0.5061637066158807
+      ]
+    },
+    "proprio": {
+      "max": [
+        0.25029754638671875,
+        0.31299400329589844,
+        0.35338008403778076,
+        3.14158034324646,
+        0.3208673596382141,
+        0.24391189217567444,
+        0.07999999821186066
+      ],
+      "mean": [
+        -0.05652934677635347,
+        -0.025397897083503245,
+        0.12844881691668225,
+        -1.6937173001403745,
+        -0.1496495681055279,
+        -0.3015770231770011,
+        0.047476216821677936
+      ],
+      "min": [
+        -0.3919825553894043,
+        -0.37238645553588867,
+        0.006002850830554962,
+        -3.141573429107666,
+        -0.7715229988098145,
+        -1.497099757194519,
+        0.0
+      ],
+      "std": [
+        0.12287356119049214,
+        0.10620384101601804,
+        0.11782128548373502,
+        2.546109786271684,
+        0.20788923302480705,
+        0.392757186079188,
+        0.02807772246525421
+      ]
+    },
+    "state": {
+      "max": [
+        0.25029754638671875,
+        0.31299400329589844,
+        0.35338008403778076,
+        3.14158034324646,
+        0.3208673596382141,
+        0.24391189217567444,
+        0.07999999821186066
+      ],
+      "mean": [
+        -0.05652934677635347,
+        -0.025397897083503245,
+        0.12844881691668225,
+        -1.6937173001403745,
+        -0.1496495681055279,
+        -0.3015770231770011,
+        0.047476216821677936
+      ],
+      "min": [
+        -0.3919825553894043,
+        -0.37238645553588867,
+        0.006002850830554962,
+        -3.141573429107666,
+        -0.7715229988098145,
+        -1.497099757194519,
+        0.0
+      ],
+      "std": [
+        0.12287356119049214,
+        0.10620384101601804,
+        0.11782128548373502,
+        2.546109786271684,
+        0.20788923302480705,
+        0.392757186079188,
+        0.02807772246525421
+      ]
+    }
+  }
+}

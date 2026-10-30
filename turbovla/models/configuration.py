@@ -32,6 +32,16 @@ class VisionEncoderConfig:
     position_init_std: float = 0.01
     position_scale_init: float = 0.01
     dropout: float = 0.1
+    # Optional per-view camera / time indices ("view" position embedding only). When set, each view
+    # gets camera_embedding[view_camera_ids[i]] + time_embedding[view_time_ids[i]] instead of a
+    # per-view-position embedding. None keeps the original behaviour.
+    view_camera_ids: list[int] | None = None
+    view_time_ids: list[int] | None = None
+    # Optional history tokens: the last ``history_views`` input views are not part of the V-L path;
+    # their DINOv3 features (no gradient) are average-pooled to history_pool x history_pool per view,
+    # detached, mapped by a separate memory projector and appended to the action decoder memory.
+    history_views: int = 0
+    history_pool: int = 1
 
 
 @dataclass
@@ -60,6 +70,10 @@ class ActionHeadConfig:
     mlp_hidden_dim: int = 512
     state_hidden_dim: int = 256
     dropout: float = 0.1
+    # muTurboVLA recurrent memory (0 = off): number of memory tokens carried across timesteps.
+    # They are extra action-decoder queries; their decoder outputs (LayerNorm-ed) become the next
+    # step's memory. See docs/MU_TURBOVLA.md.
+    memory_tokens: int = 0
 
 
 @dataclass
@@ -83,6 +97,17 @@ class TurboVLAConfig:
             raise ValueError("vision.num_views must be positive")
         if self.vision.position_embedding not in {"view", "learned_patch"}:
             raise ValueError("vision.position_embedding must be 'view' or 'learned_patch'")
+        camera_ids, time_ids = self.vision.view_camera_ids, self.vision.view_time_ids
+        if (camera_ids is None) != (time_ids is None):
+            raise ValueError("vision.view_camera_ids and vision.view_time_ids must be set together")
+        if camera_ids is not None:
+            if len(camera_ids) != self.vision.num_views or len(time_ids) != self.vision.num_views:
+                raise ValueError("vision.view_camera_ids / view_time_ids need one entry per view")
+            if self.vision.position_embedding != "view":
+                raise ValueError("view_camera_ids / view_time_ids require position_embedding='view'")
+        if self.vision.history_views:
+            if self.vision.history_pool < 1:
+                raise ValueError("vision.history_pool must be >= 1")
         if self.vision.compute_precision not in {"fp32", "bf16", "bf16_autocast"}:
             raise ValueError("vision.compute_precision must be fp32, bf16, or bf16_autocast")
         if self.text.padding_length is not None:
@@ -107,6 +132,8 @@ class TurboVLAConfig:
             raise ValueError("interaction.compute_precision must be fp32 or bf16_autocast")
         if self.action.action_dim < 1 or self.action.state_dim < 1 or self.action.horizon < 1:
             raise ValueError("action dimensions and horizon must be positive")
+        if self.action.memory_tokens < 0:
+            raise ValueError("action.memory_tokens must be >= 0")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

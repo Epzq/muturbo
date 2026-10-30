@@ -1,3 +1,7 @@
+> **muTurboVLA fork:** this copy of TurboVLA adds μVLA-style recurrent memory (memory tokens in the action
+> decoder, episodic TBPTT training). See [docs/MU_TURBOVLA.md](docs/MU_TURBOVLA.md). Run its scripts with
+> `PYTHONPATH=/home/eric/muTurboVLA` (the provided scripts set it).
+
 # TurboVLA: Real-Time Vision-Language-Action Model at 32 Hz on an RTX 4090 with &lt;1 GB VRAM
 
 <div align="center">

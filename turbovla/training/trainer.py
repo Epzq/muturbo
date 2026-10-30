@@ -445,6 +445,80 @@ def move_samples_to_device(samples, device):
     return samples.to(device, non_blocking=True)
 
 
+class RestartingIterator:
+    """Iterator over a DataLoader that transparently restarts it when exhausted."""
+
+    def __init__(self, dataloader):
+        self.dataloader = dataloader
+        self._iter = iter(dataloader)
+
+    def __next__(self):
+        try:
+            return next(self._iter)
+        except StopIteration:
+            self._iter = iter(self.dataloader)
+            return next(self._iter)
+
+
+def make_train_dataloader(args, rank, world_size, device):
+    """Training DataLoader (overridable hook; muTurboVLA's memory trainer replaces it)."""
+    dataset = LiberoRLDSDataset(
+        dataset_dir=args.dataset_dir,
+        LOCAL_DINOV3_PATH=args.dinov3_path,
+        rank=rank,
+        world_size=world_size,
+        chunk_size=args.chunk_size,
+        split=args.dataset_split,
+        shuffle_buffer=args.shuffle_buffer,
+        shuffle_steps_within_episode=args.shuffle_steps_within_episode,
+        step_mix_buffer_size=args.step_mix_buffer_size,
+        seed=args.seed,
+        local_files_only=not args.allow_hf_download,
+        expected_image_size=args.expected_image_size,
+    )
+    return DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        sampler=None,
+        collate_fn=vla_collate_fn,
+        num_workers=args.num_workers,
+        pin_memory=(device.type == "cuda"),
+        persistent_workers=(args.num_workers > 0),
+    )
+
+
+def run_update(model, data_stream, args, device):
+    """Forward/backward for one optimizer update; returns the mean loss (overridable hook).
+
+    Gradients are accumulated over ``args.grad_accum_steps`` micro-batches; the caller clips,
+    steps the optimizer and the scheduler.
+    """
+    loss_accum = 0.0
+    for _ in range(args.grad_accum_steps):
+        samples, instructions, states, gt_actions, action_chunk_masks = next(data_stream)
+
+        samples = move_samples_to_device(samples, device)
+        states = states.to(device, non_blocking=True)
+        gt_actions = gt_actions.to(device, non_blocking=True)
+        action_chunk_masks = action_chunk_masks.to(device, non_blocking=True)
+
+        with torch.autocast(
+            device_type="cuda",
+            dtype=torch.bfloat16,
+            enabled=args.precision == "bf16_amp",
+        ):
+            pred_actions = model(instructions, samples, states)
+            if pred_actions.shape != gt_actions.shape:
+                raise ValueError(
+                    f"pred_actions.shape={pred_actions.shape}, gt_actions.shape={gt_actions.shape} mismatch"
+                )
+
+            loss = masked_l1_loss(pred_actions, gt_actions, action_chunk_masks)
+        (loss / args.grad_accum_steps).backward()
+        loss_accum += loss.detach().item()
+    return loss_accum / args.grad_accum_steps
+
+
 def train_model():
     args = parse_args()
     if args.head_lr is None:
@@ -587,31 +661,8 @@ def train_model():
 
         model_to_load = unwrap_model(model)
 
-        dataset = LiberoRLDSDataset(
-            dataset_dir=args.dataset_dir,
-            LOCAL_DINOV3_PATH=args.dinov3_path,
-            rank=rank,
-            world_size=world_size,
-            chunk_size=args.chunk_size,
-            split=args.dataset_split,
-            shuffle_buffer=args.shuffle_buffer,
-            shuffle_steps_within_episode=args.shuffle_steps_within_episode,
-            step_mix_buffer_size=args.step_mix_buffer_size,
-            seed=args.seed,
-            local_files_only=not args.allow_hf_download,
-            expected_image_size=args.expected_image_size,
-        )
-
-        dataloader = DataLoader(
-            dataset,
-            batch_size=args.batch_size,
-            sampler=None,
-            collate_fn=vla_collate_fn,
-            num_workers=args.num_workers,
-            pin_memory=(device.type == "cuda"),
-            persistent_workers=(args.num_workers > 0),
-        )
-        data_iter = iter(dataloader)
+        dataloader = make_train_dataloader(args, rank, world_size, device)
+        data_stream = RestartingIterator(dataloader)
 
         model.train()
         if args.freeze_backbones:
@@ -630,40 +681,12 @@ def train_model():
         loss_window = []
         while global_step < args.max_steps:
             optimizer.zero_grad(set_to_none=True)
-            loss_accum = 0.0
-
-            for _ in range(args.grad_accum_steps):
-                try:
-                    samples, instructions, states, gt_actions, action_chunk_masks = next(data_iter)
-                except StopIteration:
-                    data_iter = iter(dataloader)
-                    samples, instructions, states, gt_actions, action_chunk_masks = next(data_iter)
-
-                samples = move_samples_to_device(samples, device)
-                states = states.to(device, non_blocking=True)
-                gt_actions = gt_actions.to(device, non_blocking=True)
-                action_chunk_masks = action_chunk_masks.to(device, non_blocking=True)
-
-                with torch.autocast(
-                    device_type="cuda",
-                    dtype=torch.bfloat16,
-                    enabled=args.precision == "bf16_amp",
-                ):
-                    pred_actions = model(instructions, samples, states)
-                    if pred_actions.shape != gt_actions.shape:
-                        raise ValueError(
-                            f"pred_actions.shape={pred_actions.shape}, gt_actions.shape={gt_actions.shape} mismatch"
-                        )
-
-                    loss = masked_l1_loss(pred_actions, gt_actions, action_chunk_masks)
-                (loss / args.grad_accum_steps).backward()
-                loss_accum += loss.detach().item()
+            local_loss = run_update(model, data_stream, args, device)
 
             torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=args.max_grad_norm)
             optimizer.step()
             scheduler.step()
 
-            local_loss = loss_accum / args.grad_accum_steps
             global_loss = reduce_mean(local_loss, device, is_distributed, world_size)
 
             loss_window.append(global_loss)

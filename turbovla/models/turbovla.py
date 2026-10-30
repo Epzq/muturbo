@@ -5,6 +5,7 @@ from typing import Any, Mapping, Sequence
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from .action_head import TurboVLAActionHead
 from .components.fusion import BiAttentionBlock
@@ -122,11 +123,33 @@ class TurboVLA(nn.Module):
                 torch.full((1, self.num_views, 1, 1), float(config.vision.position_scale_init))
             )
             nn.init.trunc_normal_(self.patch_position_embedding, std=config.vision.position_init_std)
+        elif config.vision.view_camera_ids is not None:
+            # Shared camera embedding (base / wrist) + learned per-time-position embedding.
+            camera_ids = torch.tensor(config.vision.view_camera_ids, dtype=torch.long)
+            time_ids = torch.tensor(config.vision.view_time_ids, dtype=torch.long)
+            self.register_buffer("view_camera_ids", camera_ids, persistent=False)
+            self.register_buffer("view_time_ids", time_ids, persistent=False)
+            self.view_embedding = nn.Parameter(torch.zeros(1, int(camera_ids.max()) + 1, hidden_dim))
+            self.time_embedding = nn.Parameter(torch.zeros(1, int(time_ids.max()) + 1, hidden_dim))
+            nn.init.trunc_normal_(self.time_embedding, std=0.02)
+            self.register_parameter("patch_position_embedding", None)
+            self.register_parameter("patch_position_scale", None)
         else:
             self.view_embedding = nn.Parameter(torch.zeros(1, self.num_views, hidden_dim))
             self.register_parameter("patch_position_embedding", None)
             self.register_parameter("patch_position_scale", None)
         nn.init.trunc_normal_(self.view_embedding, std=0.02)
+
+        self.num_history_views = int(config.vision.history_views)
+        if self.num_history_views:
+            # Visual memory projector: own weights, maps pooled (detached) DINOv3 features of past views
+            # to history tokens, so the history path never updates the shared vision projection.
+            self.memory_projection = VisionProjection(
+                in_dim=self.vision_encoder.hidden_size,
+                out_dim=hidden_dim,
+                hidden_dim=max(hidden_dim * 4, self.vision_encoder.hidden_size // 2),
+                dropout=config.vision.dropout,
+            )
 
         self.vision_language_interaction = VisionLanguageInteraction(
             config.interaction,
@@ -163,7 +186,11 @@ class TurboVLA(nn.Module):
             scale = self.patch_position_scale.to(device=tokens.device, dtype=tokens.dtype)
             view = self.view_embedding.to(device=tokens.device, dtype=tokens.dtype)
             return tokens + scale * position + view
-        view = self.view_embedding[:, :, None, :].to(device=tokens.device, dtype=tokens.dtype)
+        if self.config.vision.view_camera_ids is not None:
+            view = self.view_embedding[:, self.view_camera_ids] + self.time_embedding[:, self.view_time_ids]
+        else:
+            view = self.view_embedding
+        view = view[:, :, None, :].to(device=tokens.device, dtype=tokens.dtype)
         return tokens + view
 
     def encode_vision(self, pixel_values: torch.Tensor) -> torch.Tensor:
@@ -173,12 +200,43 @@ class TurboVLA(nn.Module):
         tokens = self.vision_projection(tokens)
         return self._position_visual_tokens(tokens).flatten(1, 2)
 
+    def _split_history(self, pixel_values: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """history_tokens mode: [B, V+H, ...] -> current views [B, V, ...], history views [B, H, ...]."""
+        if not self.num_history_views or pixel_values.shape[1] == self.num_views:
+            return pixel_values, None
+        expected = self.num_views + self.num_history_views
+        if pixel_values.shape[1] != expected:
+            raise ValueError(f"expected {expected} views (current + history), got {pixel_values.shape[1]}")
+        return pixel_values[:, : self.num_views], pixel_values[:, self.num_views :]
+
+    def encode_history(self, history_pixels: torch.Tensor) -> torch.Tensor:
+        """Past views -> history tokens [B, H * history_pool**2, hidden].
+
+        DINOv3 (shared backbone) runs without gradients; its patch features are average-pooled to a
+        history_pool x history_pool grid, detached, and mapped by the separate memory projector.
+        """
+        batch_size, num_history = history_pixels.shape[:2]
+        flat = history_pixels.flatten(0, 1)
+        precision_context = nullcontext()
+        if self.config.interaction.compute_precision == "bf16_autocast" and flat.device.type == "cuda":
+            precision_context = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        pool = self.config.vision.history_pool
+        with precision_context:
+            with torch.no_grad():
+                features = self.vision_encoder._encode_images(flat)  # [B*H, P, C]
+                side = int(round(features.shape[1] ** 0.5))
+                grid = features.transpose(1, 2).reshape(features.shape[0], features.shape[2], side, side)
+                pooled = F.adaptive_avg_pool2d(grid, pool).flatten(2).transpose(1, 2)  # [B*H, pool*pool, C]
+            pooled = pooled.detach().to(dtype=self.memory_projection.skip.weight.dtype)
+            tokens = self.memory_projection(pooled)  # [B*H, pool*pool, hidden]
+        return tokens.reshape(batch_size, num_history * pool * pool, -1)
+
     def encode_condition(
         self,
         instructions: Sequence[str],
         samples: torch.Tensor | Mapping[str, torch.Tensor],
     ) -> torch.Tensor:
-        pixel_values = self._normalize_samples(samples)
+        pixel_values, _ = self._split_history(self._normalize_samples(samples))
         device = pixel_values.device
         precision_context = nullcontext()
         if self.config.interaction.compute_precision == "bf16_autocast" and device.type == "cuda":
@@ -204,10 +262,71 @@ class TurboVLA(nn.Module):
         instructions: Sequence[str],
         samples: torch.Tensor | Mapping[str, torch.Tensor],
         state: torch.Tensor,
-    ) -> torch.Tensor:
+        recurrent_memory: torch.Tensor | None = None,
+        reset_mask: torch.Tensor | None = None,
+        unroll: Sequence[Mapping[str, Any]] | None = None,
+        memory_update: str = "tbptt",
+        memory_ema_alpha: float = 0.1,
+    ):
+        """Single step: actions, or (actions, next_memory) with recurrent memory.
+
+        ``unroll`` (recurrent memory only, used for training): a list of K consecutive steps, each a
+        dict with ``instructions``, ``samples``, ``state``, ``reset_mask``. The whole K-step recurrence
+        runs inside this one forward call (so DDP sees one forward per backward). ``recurrent_memory``
+        is the (detached) memory carried in from the previous window. Returns (list of K action
+        tensors, final memory). memory_update="tbptt" keeps the memory chain in the graph within the
+        window; "ema" uses M_in(t+1) = a * M_out(t).detach() + (1 - a) * M_in(t).detach() (muVLA's
+        detached EMA ablation).
+        """
+        if unroll is not None:
+            if not self.action_head.num_memory_tokens:
+                raise ValueError("unroll requires recurrent memory (action.memory_tokens > 0)")
+            if memory_update not in {"tbptt", "ema"}:
+                raise ValueError(f"memory_update must be 'tbptt' or 'ema', got {memory_update!r}")
+            predictions = []
+            memory_in = recurrent_memory
+            for step in unroll:
+                actions, memory_out = self._forward_step(
+                    step["instructions"], step["samples"], step["state"], memory_in, step["reset_mask"]
+                )
+                predictions.append(actions)
+                if memory_update == "ema":
+                    # Reset was applied inside the step; use the effective input memory of that step.
+                    effective_in = self._effective_memory_in(memory_in, step["reset_mask"], memory_out)
+                    memory_in = memory_ema_alpha * memory_out.detach() + (1.0 - memory_ema_alpha) * effective_in.detach()
+                else:
+                    memory_in = memory_out
+            return predictions, memory_in
+        return self._forward_step(instructions, samples, state, recurrent_memory, reset_mask)
+
+    def _effective_memory_in(self, memory_in, reset_mask, like):
+        initial = self.action_head.initial_memory_state(like.shape[0]).to(dtype=like.dtype)
+        if memory_in is None:
+            return initial
+        if reset_mask is None:
+            return memory_in.to(dtype=like.dtype)
+        return torch.where(reset_mask[:, None, None], initial, memory_in.to(dtype=like.dtype))
+
+    def _forward_step(self, instructions, samples, state, recurrent_memory=None, reset_mask=None):
         condition = self.encode_condition(instructions, samples)
         action_dtype = self.action_head.decoder.action_queries.weight.dtype
-        return self.action_head(condition.to(dtype=action_dtype), state.to(dtype=action_dtype))
+        history_tokens = None
+        if self.num_history_views:
+            _, history_pixels = self._split_history(self._normalize_samples(samples))
+            if history_pixels is not None:
+                history_tokens = self.encode_history(history_pixels).to(dtype=action_dtype)
+        if self.action_head.num_memory_tokens:
+            # muTurboVLA: returns (actions, next_memory); recurrent_memory=None means episode start.
+            if recurrent_memory is not None:
+                recurrent_memory = recurrent_memory.to(dtype=action_dtype)
+            return self.action_head(
+                condition.to(dtype=action_dtype),
+                state.to(dtype=action_dtype),
+                history_tokens,
+                recurrent_memory,
+                reset_mask,
+            )
+        return self.action_head(condition.to(dtype=action_dtype), state.to(dtype=action_dtype), history_tokens)
 
     # Transitional read-only names used only by legacy checkpoint initialization.
     @property
@@ -270,6 +389,10 @@ def build_turbovla(args: TurboVLAConfig | Mapping[str, Any] | Any) -> TurboVLA:
                 attention_implementation=_arg(args, "vision_attention_implementation", None),
                 compute_precision=str(_arg(args, "dinov3_precision", "bf16_autocast")),
                 dropout=float(_arg(args, "vision_dropout", 0.1)),
+                view_camera_ids=_arg(args, "view_camera_ids", None),
+                view_time_ids=_arg(args, "view_time_ids", None),
+                history_views=int(_arg(args, "history_views", 0)),
+                history_pool=int(_arg(args, "history_pool", 1)),
             ),
             interaction=InteractionConfig(
                 hidden_dim=int(_arg(args, "hidden_dim", 256)),
@@ -294,6 +417,7 @@ def build_turbovla(args: TurboVLAConfig | Mapping[str, Any] | Any) -> TurboVLA:
                 mlp_hidden_dim=int(_arg(args, "act_mlp_hidden_dim", 512)),
                 state_hidden_dim=int(_arg(args, "act_state_hidden_dim", 256)),
                 dropout=float(_arg(args, "act_dropout", 0.1)),
+                memory_tokens=int(_arg(args, "memory_tokens", 0)),
             ),
         )
     return TurboVLA(config)

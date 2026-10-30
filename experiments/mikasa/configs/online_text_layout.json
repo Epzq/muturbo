@@ -1,0 +1,33 @@
+{
+  "output_padding_length": 44,
+  "padding_length_by_instruction": {
+    "Count how many times the blue lamp blinks, press the red button exactly that many times when the red lamp turns green, then press the black button to submit your answer.": 37,
+    "Find all working batteries by inserting each one into the socket, observing the lamp result, and then pressing the button to confirm.": 28,
+    "Find all working batteries by inserting each one into the socket, observing the lamp result, returning it from the socket to its initial slot, and then pressing the button to confirm.": 38,
+    "Intercept the rolling ball and grasp it to stop it.": 13,
+    "Intercept the rolling ball by moving to its path and deflecting it toward the target.": 20,
+    "Move all cubes onto the disc. A lamp will briefly flash while you work. After all cubes are placed, press the button matching the flash color.": 34,
+    "Observe the cube's color, wait, then touch the cube of the same color.": 20,
+    "Observe the cubes shown, wait, then touch the cube whose color was not present before.": 21,
+    "Observe the object's shape and color, wait, then touch the object of the same shape and color.": 24,
+    "Observe the object's shape, wait, then touch the object of the same shape.": 20,
+    "Observe the objects shown, wait, then touch the object whose shape and color combination was not present before.": 23,
+    "Observe the shapes shown, wait, then touch the object whose shape was not present before.": 20,
+    "Observe which color is under each cup, then touch the cup matching the lamp color.": 19,
+    "Observe which color is under each cup, track the cups as they shuffle, then touch the cup matching the lamp color.": 26,
+    "Observe which colored cubes appear during the cue, wait, then touch all of them in any order and press the center button.": 28,
+    "Observe which colored cubes appear during the cue, wait, then touch all of them in the same order as the cubes were shown and press the center button.": 35,
+    "Observe which cup hides the ball, track the cups as they shuffle, then touch the correct cup.": 22,
+    "Observe which cup hides the ball, wait, then push that cup forward.": 17,
+    "Observe which cup hides the ball, wait, then touch that cup.": 16,
+    "Push the cube onto the red target, and when the target changes color, return the cube to its original position.": 25,
+    "Watch the red cube trace a sequence of shapes. When the lamp turns green, pick up the green cube and trace the same sequence in order. After finishing all shapes, press the button to submit your answer.": 44,
+    "Watch the red cube trace a shape on the table. When the lamp turns green, pick up the green cube and trace exactly the same shape.": 31,
+    "When the white lamp turns green, start counting steps from that exact moment. Move the blue cube from the green disc to the red disc exactly on step 100 of that count.": 37,
+    "When the white lamp turns green, start counting steps from that exact moment. Move the blue cube from the green disc to the red disc exactly on step 1000 of that count.": 37,
+    "When the white lamp turns green, start counting steps from that exact moment. Move the blue cube from the green disc to the red disc exactly on step 150 of that count.": 37,
+    "When the white lamp turns green, start counting steps from that exact moment. Move the blue cube from the green disc to the red disc exactly on step 200 of that count.": 37,
+    "When the white lamp turns green, start counting steps from that exact moment. Move the blue cube from the green disc to the red disc exactly on step 300 of that count.": 37,
+    "When the white lamp turns green, start counting steps from that exact moment. Move the blue cube from the green disc to the red disc exactly on step 500 of that count.": 37
+  }
+}
